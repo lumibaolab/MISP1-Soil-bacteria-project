@@ -1,0 +1,561 @@
+#MISP3
+library(lmerTest)
+library(multcompView)
+library(multcomp)
+library(reshape2)
+library(ggplot2)
+library(gridExtra)
+library(cowplot)
+library(vegan)
+library(dplyr)
+library(picante)
+library(nlme)
+library(plyr)
+library(perm)
+library(lme4)
+library(emmeans)
+
+#Bacterial ASVv analyses
+#use glm
+misp.asv1<-read.csv(file="Final_misp1_16s_asvdata_16May24.csv")
+#nspie
+enspie.glm<-glm(enspie~Contaminant+Cu+TotalC_perc+TotalN_perc+Zn+K+S+Na+pH,
+                data=misp.asv1,na.action=na.omit, family=quasipoisson)
+summary(enspie.glm)
+pairs(emmeans(enspie.glm, "Contaminant"))
+
+#shan
+shan.glm<-glm(shan~Contaminant+Cu+TotalC_perc+TotalN_perc+Zn+K+S+Na+pH,
+              data=misp.asv1,na.action=na.omit, family=quasipoisson)
+summary(shan.glm)
+pairs(emmeans(shan.glm, "Contaminant"))
+
+#log response ratio
+library(dplyr)
+library(p.adjust)
+library(SingleCaseES)
+
+misp_asv.d1<-read.csv(file="Final_misp1_16s_asvdata_16May24.csv")
+#select only oil
+oil.enspie<-misp_asv.d1%>%
+  filter(misp_asv.d1$Contaminant=="Oil")
+#select only metal
+metal.enspie<-misp_asv.d1%>%
+  filter(misp_asv.d1$Contaminant=="Metal")
+#select only control
+control.enspie<-misp_asv.d1%>%
+  filter(misp_asv.d1$Contaminant=="Natural")
+Oilrr<-LRRd(control.enspie$enspie,oil.enspie$enspie,  bias_correct = TRUE)
+Metalrr<-LRRd(control.enspie$enspie, metal.enspie$enspie, bias_correct = TRUE)
+
+#create a dataframe
+all<-rbind(Oilrr,Metalrr)
+all$treat<-c("Oil","Metal")
+write.table(all, file="LRRd_misp1_asv.data.csv", sep=',')
+
+#dbrda
+library(vegan)
+library(ggplot2)
+library(cowplot)
+library(dplyr)
+
+#March 29, 2024
+#ALL ASV
+#==============
+#ADONIS
+#++++++++++++++#
+
+#test variable correlation
+#library(Hmisc)
+#envd<-read.csv(file="env_data_misp.csv")
+#cor(envd$Ca,envd$Cu,method="pearson")
+#d<-as.matrix(envd[,5:17])
+#res<-rcorr(d, type="pearson")
+# display p-values (rounded to 3 decimals)
+#round(res$P, 3)
+
+misp1.d1<-read.csv(file="Final_misp1_16s_asvdata_16May24.csv")
+#PERMANOVA
+#make species matrix; PERMANOVA
+sp.cols.rt <- grep("ASV_", names(misp1.d1))
+# Square root transformation, Wisconsin double standardization,#this emphasizes the environmental variables
+scam.root.mat.all<-vegdist((misp1.d1[,sp.cols.rt]), method="bray", binary=FALSE, metaMDS=TRUE, 
+                           sqrt.dist=TRUE)
+adonis2(scam.root.mat.all~Contaminant+TotalC_perc+TotalN_perc+Zn+Cu+K+S+Na+pH,
+        data=misp1.d1, 
+        permutations=1000)
+
+#ALL ASV
+misp1.d1<-read.csv(file="Final_misp1_16s_asvdata_16May24.csv")
+#make species matrix
+sp.cols.rt <- grep("ASV_", names(misp1.d1))
+
+#options(contrasts = c("contr.sum","contr.poly"))
+#Make Bray Curtis dissimilarity matrix 
+mg1.mat<-vegdist((misp1.d1[,sp.cols.rt]), method="bray", binary=FALSE)
+
+#dbrda with all environmental data
+#FullModel
+dbRDA_all <- capscale(mg1.mat ~ TotalC_perc+TotalN_perc+Zn+Cu+K+S+Na+pH, 
+                      data=misp1.d1)
+#no C and N because of low detection limit
+#TotalC_perc+
+#Null Model
+#generate one model with NOTHING to explain the braycurtis dm matrix
+dbRDA_all.0 <- capscale(mg1.mat~1,data=misp1.d1)
+#use forward selection 
+dbRDA_all.mg1 <- ordistep(dbRDA_all.0,scope=formula(dbRDA_all),
+                          direction="forward",Pin=.1,trace=T,pstep=500000)
+dbRDA_all.mg1
+#test significance of analysis
+anova(dbRDA_all.mg1)
+anova(dbRDA_all.mg1, by="term")
+#any rid of NA values?
+anyNA(misp1.d1)
+#make model sumary
+B <- summary(dbRDA_all.mg1)
+
+#2 Functional potential (richness, dbrda same as above)
+#functional richness
+misp.func1<-read.csv(file="Final_metabolic_paths_norm_misp1.csv")
+richness.glm<-glm(rich.vegan~Contaminant+TotalC_perc+TotalN_perc+Zn+Cu+K+S+Na+pH,
+                  data=misp.func1,na.action=na.omit, family=poisson(link = "log"))
+summary(richness.glm)
+pairs(emmeans(richness.glm, "Contaminant"))
+
+shan.glm<-glm(shan~Contaminant+TotalC_perc+TotalN_perc+Zn+Cu+K+S+Na+pH,
+              data=misp.func1,na.action=na.omit, family=quasipoisson)
+summary(shan.glm)
+pairs(emmeans(shan.glm, "Contaminant"))
+#permanova; ADONIS
+misp.func1<-read.csv(file="Final_metabolic_paths_norm_misp1.csv")
+names(div.d)[names(div.d$Contaminant) == "Natural"] <- "Control"
+
+# Square root transformation, Wisconsin double standardization,#this emphasizes the environmental variables
+scam.root.mat.all<-vegdist((misp.func1[,18:475]), method="bray", binary=FALSE, metaMDS=TRUE, 
+                           sqrt.dist=TRUE)
+adonis2(scam.root.mat.all~Contaminant+TotalC_perc+TotalN_perc+Zn+Cu+K+S+Na+pH,data=misp.func1, 
+        permutations=1000)
+misp.func1<-read.csv(file="Final_metabolic_paths_norm_misp1.csv")
+names(div.d)[names(div.d$Contaminant) == "Natural"] <- "Control"
+# Make Bray Curtis dissimilarity matrix 
+mg1.mat<-vegdist((misp.func1[,18:475]), method="bray", binary=FALSE)
+
+#dbrda with all environmental data
+#FullModel
+dbRDA_all <- capscale(mg1.mat ~ Contaminant+TotalC_perc+TotalN_perc+Zn+Cu+K+S+Na+pH, 
+                      data=misp.func1)
+#Null Model
+#generate one model with NOTHING to explain the braycurtis dm matrix
+dbRDA_all.0 <- capscale(mg1.mat~1,data=misp.func1)
+
+#use forward selection to choose which elements of the full model explain a significant amount of variaiton in the unifrac dm by comparing it to the null
+
+dbRDA_all.func <- ordistep(dbRDA_all.0,scope=formula(dbRDA_all),
+                           direction="forward",Pin=.1,trace=T,pstep=500000)
+dbRDA_all.func
+
+#test significance of analysis
+anova(dbRDA_all.func)
+anova(dbRDA_all.func, by="term")
+
+#make model sumary
+B <- summary(dbRDA_all.func)
+
+#plot
+plot(dbRDA_all.func)
+A.1 <- scores(dbRDA_all.func)
+A.2 <- A.1$sites
+A.3 <- cbind(A.2, misp.func1)
+#scores for arrows
+A.4 <- data.frame(scores(dbRDA_all.func, display = "bp"))
+
+# Define the arrow aesthetic mapping
+arrow_map <- aes(xend = CAP1, yend = CAP2, x = 0, y = 0, shape = NULL, color = NULL, fill = NULL)
+label_map <- aes(x = 1*CAP1, y = 1*CAP2, label = row.names(A.4), shape = NULL, color = NULL, fill = NULL)
+arrowhead = arrow(length = unit(0.02, "npc"))
+
+#subset A4 for labeling; only signficant factors
+A.4b <- A.4[1:2,]
+A4.sub1 <- A.4[4,]
+A4.sub2 <- A.4[1,]
+#make plot
+p <- ggplot(data = A.3, aes(x = CAP1, y = CAP2), bty="n")
+p.dbrda.mg1<-p +
+  geom_point(data = A.3, alpha = 2/5, size=3,
+             aes(shape = Contaminant, stroke = 1, color=Contaminant)) +
+  theme_bw() + 
+  geom_segment(arrow_map, linewidth = rel(0.7), data = A.4b, arrow = arrowhead) +
+  geom_text(label_map, size = rel(3), data = A4.sub1, show.legend = FALSE, hjust = -3, vjust=10, label = c("Na"), nudge_y = 0.1) +
+  geom_text(label_map, size = rel(3), data = A4.sub2, show.legend = FALSE, hjust = 1, vjust=1, label = c("Total % C"), nudge_y = 0.1) +
+  scale_color_manual(values=c("black", "blue", "orange"))+
+  #scale_shape_manual(values=c(15,17,0,2))+
+  #scale_fill_manual(name = "", labels = c("High Salinity", "Low Salinity"),values=c("black", "red"))+
+  xlab(label = paste("CAP1 (", round(B$concont$importance[2,1]*100, digits = 1), "%)", sep="")) +
+  ylab(label = paste("CAP2 (", round(B$concont$importance[2], digits = 1), "%)", sep="")) 
+#scale_shape_manual(name = "", labels = c("CI", "SM"), 
+#                  values = c(1,17))
+p.dbrda.mg1
+ggsave(p.dbrda.mg1, file="db-rda_metab-func_24May2024.tiff", width = 100, height = 85, units = "mm", dpi=600)
+
+#indicator path
+library(indicspecies)
+library(mvabund)
+misp.func1<-read.csv(file="Final_metabolic_paths_norm_misp1.csv")
+#select columns with the otu and convert to mvabubd df
+metab.d <-clr(misp.func1[,5:465])
+group<-as.factor(misp.func1$Contaminant)
+#conduct analysis; restrict to 1 grouping (only by individual treatment)
+indic.pathway<- multipatt(metab.d, group, max.order=1,
+                          func = "r.g", control = how(nperm=9999))
+summary(indic.pathway)
+indic.sum<-as.data.frame(unclass(summary(indic.pathway)))
+write.table(indic.sum, file="misp1_indicator_pathway.csv", sep=',',quote = FALSE, row.names = F)
+
+#corr
+#fit the model
+log.mod <- lm(log(misp.func1$shan)~ misp1.d1$shan)
+#view the output of the model
+summary(log.mod)
+log.mod2<-lm(log(misp1.d1$rich.vegan)~ misp.func1$rich.vegan)
+log.mod2<-lm(log(misp.func1$rich.vegan)~ log( misp1.d1$enspie))
+summary(log.mod2)
+plot(log(misp.func1$rich.vegan)~log(misp1.d1$enspie))
+plot(misp.func1$rich.vegan~misp1.d1$enspie)
+
+#Generating figures
+#Fig 1
+# Load libraries
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(readxl)
+
+# Function to process each DataFrame and calculate the top 10 classes
+top_10_classes <- function(df) {
+  df <- df %>%
+    separate(Taxon, into = c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species"), sep = ";", fill = "right") %>%
+    mutate(Class = gsub("^D_\\d+__", "", Class)) %>%
+    filter(!is.na(Class) & Class != "")
+  
+  class_abundance <- df %>%
+    group_by(Class) %>%
+    summarize(sum_abundance = sum(sum, na.rm = TRUE)) %>%
+    arrange(desc(sum_abundance))
+  
+  top_10_class <- head(class_abundance, 10)
+  return(top_10_class)
+}
+
+# Read data
+file_path <- "C:/Users/yliu9/Desktop/MISP1/053124/SumAdded_Final_misp1_taxa_asv_assignment_allsorted.xlsx"
+metal_df <- read_excel(file_path, sheet = "metal")
+oil_df <- read_excel(file_path, sheet = "oil")
+natural_df <- read_excel(file_path, sheet = "control")
+
+# Get top 10 classes for each environment
+top_10_classes_metal <- top_10_classes(metal_df)
+top_10_classes_oil <- top_10_classes(oil_df)
+top_10_classes_natural <- top_10_classes(natural_df)
+
+# Combine the data into one dataframe
+combined_data <- bind_rows(
+  top_10_classes_metal %>% mutate(Environment = "Metal"),
+  top_10_classes_oil %>% mutate(Environment = "Oil"),
+  top_10_classes_natural %>% mutate(Environment = "Control")  # Changed from 'Natural' to 'Control'
+)
+
+# Calculate relative abundance
+combined_data <- combined_data %>%
+  group_by(Environment) %>%
+  mutate(relative_abundance = sum_abundance / sum(sum_abundance))
+
+# Set the working directory
+setwd("C:/Users/yliu9/Desktop")
+
+# Write the combined data to a CSV file
+write.csv(combined_data, "combined_data_with_relative_abundance.csv", row.names = FALSE)
+
+# Define a custom color palette that is color-blind friendly
+custom_colors <- c("#377eb8", "#ff7f00", "#984ea3", "#f781bf", "#a65628", 
+                   "#999999", "#dede00", "#0072B2", "#56B4E9", "#ff00ff",
+                   "#00ffff", "#d3a97d", "#696969", "#dda0dd", "#000080", "#f5f5dc")
+
+# Plot
+p <- ggplot(combined_data, aes(x = Environment, y = relative_abundance, fill = Class)) +
+  geom_bar(stat = "identity", position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  labs(x = "", y = "Relative Abundance", fill = "Class") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(size = 20, hjust = 1),
+    axis.text.y = element_text(size = 20),
+    axis.title.x = element_text(size = 20),
+    axis.title.y = element_blank(),
+    legend.title = element_text(size = 18),
+    legend.text = element_text(size = 16),
+    plot.title = element_text(size = 20, hjust = 0.5)
+  ) +
+  ggtitle("Top 10 Classes by Environment") +
+  scale_fill_manual(values = custom_colors)  # Use custom colors
+
+# Save the plot as a .tiff file with 600 dpi
+tiff("relative_abundance_plot.tiff", width = 10, height = 8, units = "in", res = 600)
+print(p)
+dev.off()
+
+#fig 2
+##combined asv richness and functional div
+###########################################
+####################
+#Fig 2a
+###################
+#misp.asv1<-read.csv(file="Final_misp1_16s_asvdata_16May24.csv")
+#get the diversity columsn from asv file
+#asv.d<-cbind(misp.asv1[,1:17],misp.asv1[,28196:28201])
+#write.table(asv.d, file="misp_asv_div_only_29May.csv", sep=',', row.names=FALSE,col.names=TRUE)
+
+#manually combine the asv and functional metabolic
+#barplot
+div.d<-read.csv(file="misp1_combined_div_data.csv")
+#rename "natural" to control
+names(div.d)[names(div.d$Contaminant) == "Natural"] <- "Control"
+rich.ave<-ddply(div.d, c("Contaminant","type"), summarise, N = length (rich.vegan), mean = mean(rich.vegan, na.rm=TRUE), 
+                sd= sd(rich.vegan, na.rm=TRUE), se = var((rich.vegan)/sqrt(N), na.rm=TRUE))
+
+ens.ave.plot<-ggplot(subset(rich.ave, type %in% c("ASV", "Function")), aes(x=as.factor(interaction(Contaminant,type)), y=mean, color=Contaminant, 
+                                                                           fill=Contaminant, group=as.factor(interaction(Contaminant,type)))) + 
+  #scale_fill_manual(values=c("gray10", "gray90"))+
+  scale_color_manual(values=c("grey50", "blue","orange"))+ 
+  ylim(0, 1300)+
+  scale_fill_manual(values=c("grey50", "blue","orange"))+
+  scale_x_discrete(limits=c("Metal.ASV","Oil.ASV","Control.ASV","Metal.Function","Oil.Function","Control.Function"),
+                   labels=c("Metal","Oil","Control","Metal","Oil","Control"))+
+  geom_bar(stat="identity",position=position_dodge(), width=0.9)+
+  #guides(fill = guide_legend(override.aes = list(linetype = 0)))+
+  ylab("Richness\n")+
+  xlab("\n\n")+
+  theme(axis.text.x=element_text(size=16, angle = 30, hjust=1),
+        axis.text.y=element_text(size=16), 
+        axis.line.y.left=element_line(color="black"),
+        axis.line.x.bottom=element_line(color="black"),
+        axis.title=element_text(size=20),
+        panel.background = element_blank(),
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        legend.position = "top", legend.title=element_blank())+
+  geom_errorbar(aes(ymin=mean-se, ymax=mean+se), position=position_dodge(0.75), width=0.2)
+ens.ave.plot
+ggsave(ens.ave.plot, file="Fig_comb_div.tiff", width = 100, height = 80, units = "mm", dpi=400)
+#Fig 2b; Log response ratio
+rr.dt<-read.csv(file="LRRd_misp1_asv.data.csv")
+rr.plot<-ggplot(data=rr.dt, aes(x=treat, y=Est, color=treat, fill=treat)) + 
+  #scale_fill_manual(values=c("gray10", "gray90"))+
+  scale_color_manual(values=c("blue","orange"))+
+  scale_fill_manual(values=c("blue","orange"))+
+  geom_point(aes(size=5))+
+  geom_errorbar(aes(ymin=SE+CI_lower, ymax=SE+CI_upper), width=.1) +
+  scale_x_discrete(limits=c("Metal","Oil"),
+                   labels=c("Metal","Oil"))+
+  ylab("Log response ratio\n")+
+  xlab("\n\n")+
+  theme(axis.text=element_text(size=18), 
+        axis.line.y.left=element_line(color="black"),
+        axis.line.x.bottom=element_line(color="black"),
+        axis.title=element_text(size=18),
+        legend.position = "none")
+rr.plot
+#Combine graph into one figure
+library(ggpubr)
+tiff("Fig_combined_div_a.tiff", width = 210, height = 110, units = 'mm', res = 400)
+ggarrange(ens.ave.plot,
+          rr.plot,
+          labels = c("a","b"),
+          ncol=2,
+          nrow=1,
+          widths = c(1.1, 1))
+dev.off()
+
+##############
+div.d<-read.csv(file="misp1_combined_div_data.csv")
+#rename "natural" to control
+names(div.d)[names(div.d$Contaminant) == "Natural"] <- "Control"
+
+#only the ASV enspie
+asv.d<-div.d[div.d$type=="ASV",]
+
+#Plot only the enspie ASV
+ensp.asv.ave<-ddply(asv.d, c("Contaminant","type"), summarise, N = length (enspie), mean = mean(enspie, na.rm=TRUE), 
+                    sd= sd(enspie, na.rm=TRUE), se = var((enspie)/sqrt(N), na.rm=TRUE))
+
+asv.ens.p<-ggplot(ensp.asv.ave, aes(x=Contaminant, y=mean, color=Contaminant, fill=Contaminant)) + 
+  #scale_fill_manual(values=c("gray10", "gray90"))+
+  scale_color_manual(values=c("grey50", "blue","orange"))+ 
+  ylim(0, 470)+
+  scale_fill_manual(values=c("grey50", "blue","orange"))+
+  scale_x_discrete(limits=c("Metal","Oil","Control"),
+                   labels=c("Metal","Oil","Control"))+
+  geom_bar(stat="identity",position=position_dodge(), width=0.9)+
+  guides(fill = FALSE)  +
+  # guides(size   = guide_legend(position = "top"),  alpha  = guide_legend(position = "inside"))+
+  ylab("Richness\n")+
+  xlab("\n\n")+
+  theme(axis.text=element_text(size=20), 
+        axis.line.y.left=element_line(color="black"),
+        axis.line.x.bottom=element_line(color="black"),
+        axis.title=element_text(size=22),
+        panel.background = element_blank(),
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  #legend.position ="none") +
+  geom_errorbar(aes(ymin=mean, ymax=mean+sd), position=position_dodge(0.75), width=0.2)
+asv.ens.p
+
+#fig 3
+library(reshape2)
+library(ggplot2)
+library(gridExtra)
+library(cowplot)
+library(dplyr)
+library(picante)
+library(plyr)
+
+#ALL ASV
+misp1.d1<-read.csv(file="Final_misp1_16s_asvdata_16May24.csv")
+#make species matrix
+sp.cols.rt <- grep("ASV_", names(misp1.d1))
+
+#options(contrasts = c("contr.sum","contr.poly"))
+#Make Bray Curtis dissimilarity matrix 
+mg1.mat<-vegdist((misp1.d1[,sp.cols.rt]), method="bray", binary=FALSE)
+
+#dbrda with all environmental data
+#FullModel
+dbRDA_all <- capscale(mg1.mat ~ TotalC_perc+TotalN_perc+Zn+Cu+K+S+Na+pH, 
+                      data=misp1.d1)
+#no C and N because of low detection limit
+#TotalC_perc+
+#Null Model
+#generate one model with NOTHING to explain the braycurtis dm matrix
+dbRDA_all.0 <- capscale(mg1.mat~1,data=misp1.d1)
+
+#use forward selection to choose which elements of the full model explain a significant amount of variation in the unifrac dm by comparing it to the null
+
+dbRDA_all.mg1 <- ordistep(dbRDA_all.0,scope=formula(dbRDA_all),
+                          direction="forward",Pin=.1,trace=T,pstep=500000)
+dbRDA_all.mg1
+
+#test significance of analysis
+anova(dbRDA_all.mg1)
+anova(dbRDA_all.mg1, by="term")
+#any rid of NA values?
+anyNA(misp1.d1)
+
+#make model sumary
+B <- summary(dbRDA_all.mg1)
+#plot
+plot(dbRDA_all.mg1)
+A.1 <- scores(dbRDA_all.mg1)
+A.2 <- A.1$sites
+A.3 <- cbind(A.2, misp1.d1)
+#scores for arrows
+A.4 <- data.frame(scores(dbRDA_all.mg1, display = "bp"))
+
+# Define the arrow aesthetic mapping
+arrow_map <- aes(xend = CAP1, yend = CAP2, x = 0, y = 0, shape = NULL, color = NULL, fill = NULL)
+label_map <- aes(x = 1*CAP1, y = 1*CAP2, label = row.names(A.4), shape = NULL, color = NULL, fill = NULL)
+arrowhead = arrow(length = unit(0.02, "npc"))
+
+#subset A4 for labeling; only signficant factors
+A.4b <- A.4[1:4,]
+A4.sub1 <- A.4[4,]
+A4.sub2 <- A.4[3,]
+A4.sub3 <- A.4[2,]
+A4.sub4 <- A.4[1,]
+
+#make plot
+p <- ggplot(data = A.3, aes(x = CAP1, y = CAP2), bty="n")
+p.dbrda.asv<-p +
+  geom_point(data = A.3, alpha = 2/5, size=3,
+             aes(shape = Contaminant, stroke = 1, color=Contaminant)) +
+  theme_bw() + 
+  geom_segment(arrow_map, linewidth = rel(0.7), data = A.4b, arrow = arrowhead) +
+  geom_text(label_map, size = rel(3), data = A4.sub1, show.legend = FALSE, hjust = 0.1, vjust=-0.2,label = c("Zn"), nudge_y = 0.1) +
+  geom_text(label_map, size = rel(3), data = A4.sub2, show.legend = FALSE, hjust = 0.7, label = c("S"), nudge_y = 0.1) +
+  geom_text(label_map, size = rel(3), data = A4.sub3, show.legend = FALSE, vjust = -1, label = c("K"), nudge_y = 0.1) +
+  geom_text(label_map, size = rel(3), data = A4.sub4, show.legend = FALSE, hjust = 1, vjust=-0.2, label = c("Total % C"), nudge_y = 0.1) +
+  scale_color_manual(values=c("black", "blue", "orange"))+
+  #scale_shape_manual(values=c(15,17,0,2))+
+  #scale_fill_manual(name = "", labels = c("High Salinity", "Low Salinity"),values=c("black", "red"))+
+  xlab(label = paste("CAP1 (", round(B$concont$importance[2,1]*100, digits = 1), "%)", sep="")) +
+  ylab(label = paste("CAP2 (", round(B$concont$importance[2], digits = 1), "%)", sep="")) +
+  theme (legend.position="none")
+p.dbrda.asv
+
+#Functional
+misp.func1<-read.csv(file="Final_metabolic_paths_norm_misp1.csv")
+# Make Bray Curtis dissimilarity matrix 
+fun.mat<-vegdist((misp.func1[,18:475]), method="bray", binary=FALSE)
+#dbrda with all environmental data
+#FullModel
+dbRDA_all <- capscale(fun.mat ~ Contaminant+TotalC_perc+TotalN_perc+Zn+Cu+K+S+Na+pH, 
+                     data=misp.func1)
+#Null Model
+#generate one model with NOTHING to explain the braycurtis dm matrix
+dbRDA_all.0 <- capscale(fun.mat~1,data=misp.func1)
+
+#use forward selection to choose which elements of the full model explain a significant amount of variaiton in the unifrac dm by comparing it to the null
+
+dbRDA_all.func <- ordistep(dbRDA_all.0,scope=formula(dbRDA_all),
+                           direction="forward",Pin=.1,trace=T,pstep=500000)
+dbRDA_all.func
+
+#test significance of analysis
+anova(dbRDA_all.func)
+anova(dbRDA_all.func, by="term")
+
+#make model sumary
+B <- summary(dbRDA_all.func)
+
+#plot
+plot(dbRDA_all.func)
+A.1f <- scores(dbRDA_all.func)
+A.2f <- A.1f$sites
+A.3f <- cbind(A.2f, misp.func1)
+#scores for arrows
+A.4f <- data.frame(scores(dbRDA_all.func, display = "bp"))
+
+# Define the arrow aesthetic mapping
+arrow_map <- aes(xend = CAP1, yend = CAP2, x = 0, y = 0, shape = NULL, color = NULL, fill = NULL)
+label_map <- aes(x = 1*CAP1, y = 1*CAP2, label = row.names(A.4f), shape = NULL, color = NULL, fill = NULL)
+arrowhead = arrow(length = unit(0.02, "npc"))
+
+#subset A4 for labeling; only signficant factors
+A.4bf <- A.4f[1:2,]
+A4.sub1f <- A.4f[4,]
+A4.sub2f <- A.4f[1,]
+
+#make plot
+pf <- ggplot(data = A.3f, aes(x = CAP1, y = CAP2), bty="n")
+p.dbrda.func1<-pf +
+  geom_point(data = A.3f, alpha = 2/5, size=3,
+             aes(shape = Contaminant, stroke = 1, color=Contaminant)) +
+  theme_bw() + 
+  geom_segment(arrow_map, linewidth = rel(0.7), data = A.4bf, arrow = arrowhead) +
+  geom_text(label_map, size = rel(3), data = A4.sub1f, show.legend = FALSE, hjust = -10, vjust=7, label = c("Na"), nudge_y = 0.1) +
+  geom_text(label_map, size = rel(3), data = A4.sub2f, show.legend = FALSE, hjust = 1, vjust=1, label = c("Total C (%)"), nudge_y = 0.1) +
+  scale_color_manual(values=c("black", "blue", "orange"))+
+  #scale_shape_manual(values=c(15,17,0,2))+
+  #scale_fill_manual(name = "", labels = c("High Salinity", "Low Salinity"),values=c("black", "red"))+
+  xlab(label = paste("CAP1 (", round(B$concont$importance[2,1]*100, digits = 1), "%)", sep="")) +
+  ylab(label = paste("CAP2 (", round(B$concont$importance[2], digits = 1), "%)", sep="")) 
+p.dbrda.func1
+
+#Combine graph into one figure
+library(ggpubr)
+tiff("Fig_dbrda_1.tiff", width = 190, height = 90, units = 'mm', res = 400)
+ggarrange(p.dbrda.asv,
+          p.dbrda.func1,
+          labels = c("a","b"),
+          ncol=2,
+          nrow=1,
+          widths = c(1, 1.4))
+dev.off()
